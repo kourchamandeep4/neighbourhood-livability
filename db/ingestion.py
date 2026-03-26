@@ -1,106 +1,317 @@
-# db/ingestion.py
-from db.client import get_client
-from db.google_api import fetch_all_categories
-from db.queries import check_suburb_in_db
+# app.py
+import os
+import sys
+import streamlit as st
+import plotly.graph_objects as go
+import pandas as pd
+from dotenv import load_dotenv
+
+# Load .env for local development
+load_dotenv(r"C:\Project-Demografy\Neighbourhood_Livability\.env")
+
+# Fix path — works both locally AND on Streamlit Cloud
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
+
+from db.ingestion import run_pipeline
+
+st.set_page_config(
+    page_title="Neighbourhood Livability Index",
+    page_icon="🏙️",
+    layout="wide"
+)
+
+# ── Metric labels ─────────────────────────────────────────────
+METRICS = {
+    "cafes":           "Cafes",
+    "parks":           "Parks",
+    "gyms":            "Gyms",
+    "childcare":       "Childcare",
+    "transport_stops": "Transport",
+    "healthcare":      "Healthcare",
+    "grocery":         "Grocery",
+    "schools":         "Schools",
+    "restaurants":     "Restaurants",
+    "banks_atms":      "Banks & ATMs",
+    "entertainment":   "Entertainment",
+    "pet_friendly":    "Pet Friendly",
+    "libraries":       "Libraries",
+    "car_washes":      "Car Washes",
+}
+
+EMOJI = {
+    "cafes":           "☕",
+    "parks":           "🌳",
+    "gyms":            "💪",
+    "childcare":       "👶",
+    "transport_stops": "🚌",
+    "healthcare":      "🏥",
+    "grocery":         "🛒",
+    "schools":         "🏫",
+    "restaurants":     "🍽️",
+    "banks_atms":      "🏦",
+    "entertainment":   "🎭",
+    "pet_friendly":    "🐾",
+    "libraries":       "📚",
+    "car_washes":      "🚗",
+}
 
 
-def save_raw_places(suburb_name, category, places):
-    client = get_client()
-    client.table("raw_places").insert({
-        "suburb_name": suburb_name,
-        "category": category,
-        "api_response": places,
-        "place_count": len(places),
-    }).execute()
+def compute_score(metrics):
+    keys = list(METRICS.keys())
+    values = [min(metrics.get(k, 0), 20) for k in keys]
+    avg = sum(values) / len(values)
+    score = (avg / 20) * 10
+    return round(score, 1)
 
 
-def compute_and_save_metrics(suburb_name):
-    client = get_client()
+def make_bar_chart(metrics_a, metrics_b, name_a, name_b):
+    labels   = [EMOJI[k] + " " + v for k, v in METRICS.items()]
+    values_a = [metrics_a.get(k, 0) for k in METRICS.keys()]
+    values_b = [metrics_b.get(k, 0) for k in METRICS.keys()]
 
-    result = (
-        client.table("raw_places")
-        .select("category, place_count")
-        .eq("suburb_name", suburb_name)
-        .execute()
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=name_a,
+        x=labels,
+        y=values_a,
+        marker_color="#00C2CB",
+        text=values_a,
+        textposition="outside"
+    ))
+    fig.add_trace(go.Bar(
+        name=name_b,
+        x=labels,
+        y=values_b,
+        marker_color="#F5A623",
+        text=values_b,
+        textposition="outside"
+    ))
+    fig.update_layout(
+        title="Amenity Comparison — Side by Side",
+        barmode="group",
+        plot_bgcolor="#0F1923",
+        paper_bgcolor="#0F1923",
+        font=dict(color="white"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        height=500,
+        margin=dict(t=80, b=20)
     )
-
-    metrics = {
-        "suburb_name": suburb_name,
-        "cafes": 0,
-        "parks": 0,
-        "gyms": 0,
-        "childcare": 0,
-        "transport_stops": 0,
-        "healthcare": 0,
-        "grocery": 0,
-        "schools": 0,
-        "restaurants": 0,
-        "banks_atms": 0,
-        "entertainment": 0,
-        "pet_friendly": 0,
-        "libraries": 0,
-        "car_washes": 0,
-    }
-
-    for row in result.data:
-        cat = row["category"]
-        count = row["place_count"] or 0
-        if cat == "transport":
-            metrics["transport_stops"] = count
-        elif cat in metrics:
-            metrics[cat] = count
-
-    client.table("suburb_metrics").upsert(
-        metrics,
-        on_conflict="suburb_name"
-    ).execute()
-
-    return metrics
+    return fig
 
 
-def run_pipeline(suburb_name, progress_callback=None, radius_km=2):
-    suburb_clean = suburb_name.strip().title()
+def make_radar_chart(metrics_a, metrics_b, name_a, name_b):
+    categories = [METRICS[k] for k in METRICS.keys()]
+    categories.append(categories[0])
 
-    if progress_callback:
-        progress_callback(10, "Checking database...")
+    values_a = [min(metrics_a.get(k, 0), 20) for k in METRICS.keys()]
+    values_a.append(values_a[0])
 
-    already_exists = check_suburb_in_db(suburb_clean)
+    values_b = [min(metrics_b.get(k, 0), 20) for k in METRICS.keys()]
+    values_b.append(values_b[0])
 
-    if already_exists:
-        if progress_callback:
-            progress_callback(70, "Found in database! Loading...")
-
-        client = get_client()
-        result = (
-            client.table("suburb_metrics")
-            .select("*")
-            .eq("suburb_name", suburb_clean)
-            .limit(1)
-            .execute()
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values_a,
+        theta=categories,
+        fill="toself",
+        name=name_a,
+        line_color="#00C2CB",
+        fillcolor="rgba(0,194,203,0.2)"
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=values_b,
+        theta=categories,
+        fill="toself",
+        name=name_b,
+        line_color="#F5A623",
+        fillcolor="rgba(245,166,35,0.2)"
+    ))
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 20],
+                color="white"
+            ),
+            bgcolor="#0F1923"
+        ),
+        plot_bgcolor="#0F1923",
+        paper_bgcolor="#0F1923",
+        font=dict(color="white"),
+        title="Livability Shape Comparison",
+        height=500,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="right",
+            x=1
         )
+    )
+    return fig
 
-        if progress_callback:
-            progress_callback(100, "Done!")
 
-        return result.data[0] if result.data else None
+def show_score_card(name, metrics, color):
+    score = compute_score(metrics)
+    stars = "★" * int(score/2) + "☆" * (5 - int(score/2))
+    st.markdown(f"""
+    <div style="
+        background: {color}22;
+        border: 2px solid {color};
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+    ">
+        <h2 style="color:{color}; margin:0">{name}</h2>
+        <h1 style="font-size:60px; margin:10px 0; color:white">
+            {score}<span style="font-size:24px">/10</span>
+        </h1>
+        <p style="font-size:24px; color:{color}">{stars}</p>
+        <p style="color:#aaa">Livability Score</p>
+    </div>
+    """, unsafe_allow_html=True)
+    return score
 
-    if progress_callback:
-        progress_callback(20, f"Fetching from Google ({radius_km}km radius)...")
 
-    all_places, lat, lng = fetch_all_categories(suburb_clean, radius_km)
+# ── Page layout ───────────────────────────────────────────────
+st.title("🏙️ Neighbourhood Livability Index")
+st.caption("Compare suburbs by amenity density — powered by Google Places")
+st.divider()
 
-    if progress_callback:
-        progress_callback(60, "Saving to database...")
+st.write("#### Search Radius")
+radius_km = st.select_slider(
+    "Select how far from suburb centre to search:",
+    options=[1, 2, 3, 5],
+    value=2,
+    format_func=lambda x: f"{x} km"
+)
+st.divider()
 
-    for category, places in all_places.items():
-        save_raw_places(suburb_clean, category, places)
+col1, col2 = st.columns(2)
+with col1:
+    suburb_a = st.text_input("📍 Suburb A", placeholder="e.g. Geelong")
+with col2:
+    suburb_b = st.text_input("📍 Suburb B", placeholder="e.g. Werribee")
 
-    if progress_callback:
-        progress_callback(80, "Computing livability scores...")
+compare_btn = st.button(
+    "🔍 Compare Suburbs",
+    type="primary",
+    use_container_width=True
+)
 
-    metrics = compute_and_save_metrics(suburb_clean)
+# ── Main logic ────────────────────────────────────────────────
+if compare_btn:
+    if not suburb_a or not suburb_b:
+        st.warning("Please enter BOTH suburbs to compare!")
+    else:
+        col1, col2 = st.columns(2)
 
-    if progress_callback:
-        progress_callback(100, "Done!")
+        with col1:
+            st.write(f"### Loading {suburb_a.title()}...")
+            bar_a  = st.progress(0)
+            text_a = st.empty()
+            def prog_a(p, m):
+                bar_a.progress(p)
+                text_a.write(m)
 
-    return metrics
+        with col2:
+            st.write(f"### Loading {suburb_b.title()}...")
+            bar_b  = st.progress(0)
+            text_b = st.empty()
+            def prog_b(p, m):
+                bar_b.progress(p)
+                text_b.write(m)
+
+        metrics_a = None
+        metrics_b = None
+
+        try:
+            metrics_a = run_pipeline(suburb_a, prog_a, radius_km)
+            bar_a.empty()
+            text_a.empty()
+        except Exception as e:
+            bar_a.empty()
+            text_a.empty()
+            st.error(f"Error loading {suburb_a}: {e}")
+
+        try:
+            metrics_b = run_pipeline(suburb_b, prog_b, radius_km)
+            bar_b.empty()
+            text_b.empty()
+        except Exception as e:
+            bar_b.empty()
+            text_b.empty()
+            st.error(f"Error loading {suburb_b}: {e}")
+
+        if metrics_a and metrics_b:
+            name_a = suburb_a.strip().title()
+            name_b = suburb_b.strip().title()
+
+            st.divider()
+
+            # Score cards
+            st.subheader("🏆 Livability Scores")
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                score_a = show_score_card(name_a, metrics_a, "#00C2CB")
+            with sc2:
+                score_b = show_score_card(name_b, metrics_b, "#F5A623")
+
+            st.divider()
+
+            # Winner banner
+            if score_a > score_b:
+                st.success(f"🏆 {name_a} wins with a livability score of {score_a}/10!")
+            elif score_b > score_a:
+                st.success(f"🏆 {name_b} wins with a livability score of {score_b}/10!")
+            else:
+                st.info("🤝 It's a tie!")
+
+            st.divider()
+
+            # Bar chart
+            st.subheader("📊 Side by Side Comparison")
+            bar_fig = make_bar_chart(metrics_a, metrics_b, name_a, name_b)
+            st.plotly_chart(bar_fig, use_container_width=True)
+
+            st.divider()
+
+            # Radar chart
+            st.subheader("🕸️ Livability Shape")
+            radar_fig = make_radar_chart(metrics_a, metrics_b, name_a, name_b)
+            st.plotly_chart(radar_fig, use_container_width=True)
+
+            st.divider()
+
+            # Detailed table
+            st.subheader("📋 Full Breakdown")
+            rows = []
+            for key, label in METRICS.items():
+                val_a = metrics_a.get(key, 0)
+                val_b = metrics_b.get(key, 0)
+                if val_a > val_b:
+                    winner = f"✅ {name_a}"
+                elif val_b > val_a:
+                    winner = f"✅ {name_b}"
+                else:
+                    winner = "🤝 Tie"
+                rows.append({
+                    "Category": EMOJI[key] + " " + label,
+                    name_a:     val_a,
+                    name_b:     val_b,
+                    "Winner":   winner
+                })
+
+            df = pd.DataFrame(rows)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+st.divider()
+st.caption("demografy.com.au | Phase 3 of 5")
