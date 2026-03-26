@@ -1,12 +1,6 @@
-<<<<<<< HEAD
-streamlit
-supabase
-python-dotenv
-pandas
-=======
-streamlit
-supabase
-python-dotenv
-pandas
->>>>>>> 8c849e109fa0c5ad10e080aee411bfb0c4b0ddbe
-plotly
+streamlit==1.32.0
+supabase==2.3.0
+python-dotenv==1.0.0
+plotly==5.18.0
+pandas==2.1.0
+requests==2.31.0
