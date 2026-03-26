@@ -22,26 +22,53 @@ CATEGORY_SEARCHES = {
     "car_washes":    "car wash",
 }
 
+def get_api_key():
+    """Gets Google API key from Streamlit secrets or .env"""
+    try:
+        import streamlit as st
+        key = st.secrets.get("GOOGLE_API_KEY")
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.environ.get("GOOGLE_API_KEY")
+
+
 def get_suburb_coordinates(suburb_name):
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    """
+    Uses Google Geocoding API to get
+    exact lat/lng centre of a suburb.
+    """
+    api_key = get_api_key()
+
+    if not api_key:
+        raise Exception("Missing GOOGLE_API_KEY!")
+
     url = "https://maps.googleapis.com/maps/api/geocode/json"
     params = {
         "address": f"{suburb_name} Australia",
         "key": api_key
     }
+
     response = requests.get(url, params=params)
     data = response.json()
+
     if data["status"] != "OK":
         raise Exception(f"Could not find suburb: {suburb_name}")
+
     location = data["results"][0]["geometry"]["location"]
     return location["lat"], location["lng"]
 
 
 def fetch_places_for_category(suburb_name, category, lat, lng, radius_km=2):
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    """
+    Searches for one category within
+    radius_km of the suburb centre.
+    """
+    api_key = get_api_key()
 
     if not api_key:
-        raise Exception("Missing GOOGLE_API_KEY in your .env file!")
+        raise Exception("Missing GOOGLE_API_KEY!")
 
     search_term = CATEGORY_SEARCHES[category]
     query = f"{search_term} in {suburb_name} Australia"
@@ -71,7 +98,9 @@ def fetch_places_for_category(suburb_name, category, lat, lng, radius_km=2):
     response = requests.post(url, headers=headers, json=body)
 
     if response.status_code != 200:
-        raise Exception(f"Google API error: {response.status_code} - {response.text}")
+        raise Exception(
+            f"Google API error: {response.status_code} - {response.text}"
+        )
 
     data = response.json()
     places = data.get("places", [])
@@ -79,11 +108,16 @@ def fetch_places_for_category(suburb_name, category, lat, lng, radius_km=2):
 
 
 def fetch_all_categories(suburb_name, radius_km=2):
+    """
+    Fetches all 14 categories for a suburb
+    within the given radius.
+    """
     print(f"Finding coordinates for {suburb_name}...")
     lat, lng = get_suburb_coordinates(suburb_name)
     print(f"Found: lat={lat}, lng={lng}")
 
     results = {}
+
     for category in CATEGORY_SEARCHES.keys():
         print(f"Fetching {category} within {radius_km}km...")
         try:
